@@ -1,4 +1,4 @@
-imgur-hosted-reddit-posted-downloader
-=====================================
+redditImageDownloader
+=====================
 
-A Python script that checks Reddit for Imgur posts and downloads the corresponding images.
+A Python script that checks Reddit for image submissions and downloads the corresponding image files.
