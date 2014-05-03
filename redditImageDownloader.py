@@ -87,7 +87,9 @@ parser = argparse.ArgumentParser(description="Download images from specified sub
 parser.add_argument("subreddit", help="subreddit to download from", type=str)
 parser.add_argument("-d", "--save_location", help="location to store downloaded images", default=".", type=str)
 parser.add_argument("-s", "--score", help="minimum score required to download", default=500, type=int)
+parser.add_argument("-p", "--period", help="period of interest (day, week, month)", default="day", type=str)
 parser.add_argument("-l", "--logfile", help="filename for logging", type=str)
+parser.add_argument("-m", "--max", help="maximum number of submissions", default=25, type=int)
 parser.add_argument("-q", "--quiet", help="suppress output", action='store_true', default=False)
 args = parser.parse_args()
 save_location = os.path.abspath(args.save_location)
@@ -111,11 +113,16 @@ if not args.quiet:
     ch.setLevel(logging.INFO)
     logger.addHandler(ch)
 
-logging.info('Beginning scrape of /r/{} subreddit (score>{}) to {}'.format(args.subreddit, args.score, save_location))
+logging.info('Beginning scrape of /r/{} subreddit (top this {}, score>{}) to {}'.format(args.subreddit, args.period, args.score, save_location))
 
 # Connect to reddit and download the subreddit front page
-r = praw.Reddit(user_agent='redditImageDownloader/1.0 (https://github.com/gaddman/redditImageDownloader)')
-submissions = r.get_subreddit(args.subreddit).get_top_from_day(limit=25)
+r = praw.Reddit(user_agent='redditImageDownloader/1.1 (https://github.com/gaddman/redditImageDownloader)')
+if args.period == 'day':
+    submissions = r.get_subreddit(args.subreddit).get_top_from_day(limit=args.max)
+elif args.period == 'week':
+    submissions = r.get_subreddit(args.subreddit).get_top_from_week(limit=args.max)
+elif args.period == 'month':
+    submissions = r.get_subreddit(args.subreddit).get_top_from_month(limit=args.max)
 
 # Process all the submissions
 try:
