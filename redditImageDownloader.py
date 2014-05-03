@@ -2,7 +2,6 @@
 
 # fork of https://github.com/asweigart/imgur-hosted-reddit-posted-downloader
 # works for python2 or python3
-# explicitly creating session rather than requests.get so session can be closed on completion and avoid warnings of unclosed sockets (in python3)
 import argparse
 import glob
 import logging
@@ -15,6 +14,8 @@ from bs4 import BeautifulSoup
 
 def download_image(image_url, local_filename):
     logging.debug('Download...')
+    # explicitly creating session rather than requests.get so session can be closed on completion and avoid warnings of unclosed sockets (in python3)
+    local_filename = os.path.join(save_location, local_filename)
     with requests.Session() as s:
         response = s.get(image_url, stream=True)
         # determine file size in MB (where provided)
@@ -24,6 +25,61 @@ def download_image(image_url, local_filename):
             with open(local_filename, 'wb') as fo:
                 for chunk in response.iter_content(4096):
                     fo.write(chunk)
+
+
+def imgur_handler(submission_url):
+    # handle albums and images on imgur.com. Using BeautifulSoup rather than the Imgur API for now
+    if '//imgur.com/a/' in submission_url:
+        # album
+        logging.debug('Imgur page album')
+        with requests.Session() as s:
+            response = s.get(submission_url)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text)
+                matches = soup.select('.album-view-image-link a')
+                logging.debug('--{} images'.format(len(matches)))
+                for index, match in enumerate(matches):
+                    image_url = match['href']
+                    if image_url.startswith('//'):
+                        # if no schema is supplied in the url, prepend 'http:' to it
+                        image_url = 'http:' + image_url
+                    image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
+                    # add index to the name to retain order
+                    local_filename = 'reddit_{}_{}_{:02d}_{}'.format(args.subreddit, submission.id, index, image_filename)
+                    download_image(image_url, local_filename)
+
+    elif '//imgur.com/' in submission_url:
+        # single image page or a redirect to a single image
+        logging.debug('Imgur page')
+        # check for a redirection, using head rather than get
+        with requests.Session() as s:
+            response = s.head(submission_url, allow_redirects=False)
+            if response.status_code == 301:
+                # redirected, grab where to (assuming imgur will only redirect once, with status 301)
+                logging.debug('--Imgur page redirect')
+                image_url = response.headers['location']
+            elif response.status_code == 200:
+                # no redirect, go ahead and download the full page
+                logging.debug('--Imgur page single')
+                response = s.get(submission_url)
+                soup = BeautifulSoup(response.text)
+                image_url = soup.find('link', rel='image_src')['href']
+                if image_url.startswith('//'):
+                    # if no schema is supplied in the url, prepend 'http:' to it
+                    image_url = 'http:' + image_url
+
+        image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
+        local_filename = 'reddit_{}_{}_{}'.format(args.subreddit, submission.id, image_filename)
+        download_image(image_url, local_filename)
+
+    elif '//i.imgur.com/' in submission_url:
+        # single image
+        logging.debug('Imgur image')
+        image_url = submission_url
+        image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
+        local_filename = 'reddit_{}_{}_{}'.format(args.subreddit, submission.id, image_filename)
+        download_image(image_url, local_filename)
+
 
 # define and parse arguments
 parser = argparse.ArgumentParser()
@@ -68,61 +124,15 @@ try:
         if submission.score < args.score:
             logging.info('Score too low ({}): "{}" at {}'.format(submission.score, submission.title, submission.url))
             continue  # skip submissions that haven't even reached required score
-        if len(glob.glob(os.path.join(save_location, 'reddit_%s_%s_*' % (args.subreddit, submission.id)))) > 0:
+        if len(glob.glob(os.path.join(save_location, 'reddit_{}_{}_*'.format(args.subreddit, submission.id)))) > 0:
             logging.info('Already downloaded: "{}" at {}'.format(submission.title, submission.url))
             continue  # we've already downloaded files for this reddit submission
 
         logging.info('Good submission (score {}): "{}" at {}'.format(submission.score, submission.title, submission.url))
 
-        if '//imgur.com/a/' in submission.url:
-            # This is an Imgur album submission.
-            logging.debug('Imgur page album')
-            with requests.Session() as s:
-                response = s.get(submission.url)
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.text)
-                    matches = soup.select('.album-view-image-link a')
-                    logging.debug('--{} images'.format(len(matches)))
-                    for match in matches:
-                        image_url = match['href']
-                        if image_url.startswith('//'):
-                            # if no schema is supplied in the url, prepend 'http:' to it
-                            image_url = 'http:' + image_url
-                        image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
-                        local_filename = os.path.join(save_location, 'reddit_%s_%s_%s' % (args.subreddit, submission.id, image_filename))
-                        download_image(image_url, local_filename)
-
-        elif '//imgur.com/' in submission.url:
-            # This is an Imgur page with a single image or a redirect to a single image
-            logging.debug('Imgur page')
-            # check for a redirection, using head rather than get
-            with requests.Session() as s:
-                response = s.head(submission.url, allow_redirects=False)
-                if response.status_code == 301:
-                    # redirected, grab where to (assuming imgur will only redirect once, with status 301)
-                    logging.debug('--Imgur page redirect')
-                    image_url = response.headers['location']
-                elif response.status_code == 200:
-                    # no redirect, go ahead and download the full page
-                    logging.debug('--Imgur page single')
-                    response = s.get(submission.url)
-                    soup = BeautifulSoup(response.text)
-                    image_url = soup.find('link', rel='image_src')['href']
-                    if image_url.startswith('//'):
-                        # if no schema is supplied in the url, prepend 'http:' to it
-                        image_url = 'http:' + image_url
-
-            image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
-            local_filename = os.path.join(save_location, 'reddit_%s_%s_%s' % (args.subreddit, submission.id, image_filename))
-            download_image(image_url, local_filename)
-
-        elif '//i.imgur.com/' in submission.url:
-            # Imgur URL for single image
-            logging.debug('Imgur image')
-            image_url = submission.url
-            image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
-            local_filename = os.path.join(save_location, 'reddit_%s_%s_%s' % (args.subreddit, submission.id, image_filename))
-            download_image(image_url, local_filename)
+        if 'imgur.com/' in submission.url:
+            # This is an Imgur submission, we can deal with this
+            imgur_handler(submission.url)
         else:
             # non-Imgur URL, let's see what can be done.
             # Only interested in images, ignore redirects or links to HTML pages
@@ -132,7 +142,7 @@ try:
                 if 'image/' in response.headers['Content-Type']:
                     image_url = submission.url
                     image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
-                    local_filename = os.path.join(save_location, 'reddit_%s_%s_%s' % (args.subreddit, submission.id, image_filename))
+                    local_filename = 'reddit_{}_{}_{}'.format(args.subreddit, submission.id, image_filename)
                     download_image(image_url, local_filename)
                 else:
                     logging.warning("'Content-Type' not suitable ({})".format(response.headers['Content-Type']))
