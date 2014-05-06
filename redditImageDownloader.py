@@ -78,51 +78,14 @@ def imgur_handler(submission_url):
         # single image, no magic needed
         logging.debug('Imgur image')
         images.append(submission_url)
+
     return images
 
 
-def getargs():
-    """
-    Just grab all the command line arguments and return
-    """
-    parser = argparse.ArgumentParser()
-    parser = argparse.ArgumentParser(description="Download images from specified subreddit")
-    parser.add_argument("subreddit", help="subreddit to download from", type=str)
-    parser.add_argument("-p", "--period", help="period of interest (day, week, month)", default="day", type=str)
-    parser.add_argument("-s", "--score", help="minimum score required to download", default=500, type=int)
-    parser.add_argument("-d", "--download_location", help="location to store downloaded images", default=".", type=str)
-    parser.add_argument("-l", "--logfile", help="filename for logging", type=str)
-    parser.add_argument("-m", "--max", help="maximum number of submissions", default=25, type=int)
-    parser.add_argument("-q", "--quiet", help="suppress output", action='store_true', default=False)
-    args = parser.parse_args()
-    args.download_location = os.path.abspath(args.download_location)
-
-    return args
-
-
-def reddit_image_downloader(subreddit, period='day', score=500, max=25, logfile=None, download_location='.', quiet=True):
+def reddit_image_downloader(subreddit, period='day', score=500, max=25, download_location='.'):
     """
     Download images from a chosen Reddit subreddit
     """
-
-    # setup logging to file and stderr
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-    # suppress logs from the requests module hitting root logger
-    logging.getLogger('urllib3').propagate = False
-
-    if logfile:
-        fh = logging.FileHandler(filename=logfile)
-        formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(name)s %(message)s')
-        fh.setFormatter(formatter)
-        fh.setLevel(logging.DEBUG)
-        logger.addHandler(fh)
-        logging.getLogger('urllib3').addHandler(fh)
-
-    if not quiet:
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.INFO)
-        logger.addHandler(ch)
 
     logging.info('Beginning scrape of /r/{} subreddit (top this {}, score>{}) to {}'.format(
         subreddit, period, score, download_location))
@@ -151,11 +114,11 @@ def reddit_image_downloader(subreddit, period='day', score=500, max=25, logfile=
 
             if 'imgur.com/' in submission.url:
                 # This is an Imgur submission, we can deal with this
-                images = imgur_handler(submission.url)
-                for index, image in enumerate(images):
-                    image_filename = image.split('/')[-1].split('#')[0].split('?')[0]
+                image_urls = imgur_handler(submission.url)
+                for index, image_url in enumerate(image_urls):
+                    image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
                     local_filename = 'reddit_{}_{}_{:02d}_{}'.format(subreddit, submission.id, index, image_filename)
-                    download_image(image, os.path.join(download_location, local_filename))
+                    download_image(image_url, os.path.join(download_location, local_filename))
             else:
                 # non-Imgur URL, let's see what can be done.
                 # Only interested in images, ignore redirects or links to HTML pages
@@ -175,6 +138,46 @@ def reddit_image_downloader(subreddit, period='day', score=500, max=25, logfile=
     except (praw.errors.InvalidSubreddit, praw.errors.RedirectException):
         logging.error("Invalid subreddit: {}".format(subreddit))
 
+
+def getargs():
+    """
+    Just grab all the command line arguments and return
+    """
+    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Download images from specified Reddit subreddit")
+    parser.add_argument("subreddit", help="subreddit to download from", type=str)
+    parser.add_argument("-p", "--period", help="period of interest (day, week, month)", default="day", type=str)
+    parser.add_argument("-s", "--score", help="minimum score required to download", default=500, type=int)
+    parser.add_argument("-d", "--download_location", help="location to store downloaded images", default=".", type=str)
+    parser.add_argument("-l", "--logfile", help="filename for logging", type=str)
+    parser.add_argument("-m", "--max", help="maximum number of submissions", default=25, type=int)
+    parser.add_argument("-q", "--quiet", help="suppress output", action='store_true', default=False)
+    args = parser.parse_args()
+    args.download_location = os.path.abspath(args.download_location)
+
+    return args
+
+
 if __name__ == '__main__':
     args = getargs()
-    reddit_image_downloader(args.subreddit, args.period, args.score, args.max, args.logfile, args.download_location, args.quiet)
+
+    # setup logging to file and stderr
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    # suppress logs from the requests module hitting root logger
+    logging.getLogger('urllib3').propagate = False
+
+    if args.logfile:
+        fh = logging.FileHandler(filename=args.logfile)
+        formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(name)s %(message)s')
+        fh.setFormatter(formatter)
+        fh.setLevel(logging.DEBUG)
+        logger.addHandler(fh)
+        logging.getLogger('urllib3').addHandler(fh)
+
+    if not args.quiet:
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        logger.addHandler(ch)
+
+    reddit_image_downloader(args.subreddit, args.period, args.score, args.max, args.download_location)
