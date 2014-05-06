@@ -29,36 +29,36 @@ def download_image(image_url, local_filename):
                     fo.write(chunk)
 
 
-def imgur_handler(submission, subreddit, download_location):
+def imgur_handler(submission_url):
     """
-    Download submissions in the Imgur domain
+    Download submissions in the Imgur domain.
+    For a given Imgur URL, return a list of URLs to the images.
+    Using BeautifulSoup rather than the Imgur API for now.
     """
-    # handle albums and images on imgur.com. Using BeautifulSoup rather than the Imgur API for now
-    if '//imgur.com/a/' in submission.url:
+    images = []
+    if '//imgur.com/a/' in submission_url:
         # album
         logging.debug('Imgur page album')
         with requests.Session() as s:
-            response = s.get(submission.url)
+            response = s.get(submission_url)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text)
                 matches = soup.select('.album-view-image-link a')
                 logging.debug('--{} images'.format(len(matches)))
+                # for index, match in enumerate(matches):
                 for index, match in enumerate(matches):
                     image_url = match['href']
                     if image_url.startswith('//'):
                         # if no schema is supplied in the url, prepend 'http:' to it
                         image_url = 'http:' + image_url
-                    image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
-                    # add index to the name to retain order
-                    local_filename = 'reddit_{}_{}_{:02d}_{}'.format(subreddit, submission.id, index, image_filename)
-                    download_image(image_url, os.path.join(download_location, local_filename))
+                    images.append(image_url)
 
-    elif '//imgur.com/' in submission.url:
+    elif '//imgur.com/' in submission_url:
         # single image page or a redirect to a single image
         logging.debug('Imgur page')
         # check for a redirection, using head rather than get
         with requests.Session() as s:
-            response = s.head(submission.url, allow_redirects=False)
+            response = s.head(submission_url, allow_redirects=False)
             if response.status_code == 301:
                 # redirected, grab where to (assuming imgur will only redirect once, with status 301)
                 logging.debug('--Imgur page redirect')
@@ -66,24 +66,19 @@ def imgur_handler(submission, subreddit, download_location):
             elif response.status_code == 200:
                 # no redirect, go ahead and download the full page
                 logging.debug('--Imgur page single')
-                response = s.get(submission.url)
+                response = s.get(submission_url)
                 soup = BeautifulSoup(response.text)
                 image_url = soup.find('link', rel='image_src')['href']
                 if image_url.startswith('//'):
                     # if no schema is supplied in the url, prepend 'http:' to it
                     image_url = 'http:' + image_url
+                images.append(image_url)
 
-        image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
-        local_filename = 'reddit_{}_{}_{}'.format(subreddit, submission.id, image_filename)
-        download_image(image_url, os.path.join(download_location, local_filename))
-
-    elif '//i.imgur.com/' in submission.url:
-        # single image
+    elif '//i.imgur.com/' in submission_url:
+        # single image, no magic needed
         logging.debug('Imgur image')
-        image_url = submission.url
-        image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
-        local_filename = 'reddit_{}_{}_{}'.format(subreddit, submission.id, image_filename)
-        download_image(image_url, os.path.join(download_location, local_filename))
+        images.append(submission_url)
+    return images
 
 
 def getargs():
@@ -156,7 +151,11 @@ def reddit_image_downloader(subreddit, period='day', score=500, max=25, logfile=
 
             if 'imgur.com/' in submission.url:
                 # This is an Imgur submission, we can deal with this
-                imgur_handler(submission, subreddit, download_location)
+                images = imgur_handler(submission.url)
+                for index, image in enumerate(images):
+                    image_filename = image.split('/')[-1].split('#')[0].split('?')[0]
+                    local_filename = 'reddit_{}_{}_{:02d}_{}'.format(subreddit, submission.id, index, image_filename)
+                    download_image(image, os.path.join(download_location, local_filename))
             else:
                 # non-Imgur URL, let's see what can be done.
                 # Only interested in images, ignore redirects or links to HTML pages
