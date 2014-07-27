@@ -6,6 +6,7 @@ import argparse
 import glob
 import logging
 import os
+import re
 
 import requests
 import praw
@@ -78,6 +79,79 @@ def imgur_handler(submission_url):
         # single image, no magic needed
         logging.debug('Imgur image')
         images.append(submission_url)
+    else:
+        logging.info('Imgur unhandled')
+
+    return images
+
+
+def flickr_handler(submission_url):
+    """
+    Download submissions in the Flickr domain.
+    For a given Flickr URL, return a list of URLs to the images.
+    Using BeautifulSoup rather than the Flickr API for now.
+    """
+    images = []
+
+    image_base = re.compile(".*flickr\.com/photos/[\w@]+/\d+/$")
+    image_lightbox = re.compile("(.*flickr\.com/photos/[\w@]+/\d+/)in/photostream/lightbox/")
+    image_sizes = re.compile(".*flickr\.com/photos/[\w@]+/\d+/sizes")
+
+    if 'flic.kr/p/' in submission_url:
+        # album with shortened URL - will redirect
+        # check for a redirection, using head rather than get
+        with requests.Session() as s:
+            response = s.head(submission_url, allow_redirects=False)
+            if response.status_code == 301:
+                # redirected, grab where to (assuming Flickr will only redirect once, with status 301)
+                logging.debug('--Flickr page redirect')
+                image_url = response.headers['location']
+            elif response.status_code == 200:
+                # no redirect, go ahead and download the full page
+                logging.debug('--Flickr page single')
+                response = s.get(submission_url)
+                soup = BeautifulSoup(response.text)
+                image_url = soup.find('link', rel='image_src')['href']
+                if image_url.startswith('//'):
+                    # if no schema is supplied in the url, prepend 'http:' to it
+                    image_url = 'http:' + image_url
+                images.append(image_url)
+
+    if image_base.match(submission_url):
+        # one image of an album displayed (new page?)
+        # can't find the link in the source (loaded through javascript?) so load the page with the original image instead
+        # may redirect to the appropriately sized image
+        submission_url = submission_url + 'sizes/o'
+        logging.debug('Flickr single image new photo page')
+
+    elif image_lightbox.match(submission_url):
+        # one image of an album displayed (old page?)
+        # can't find the link in the source (loaded through javascript?) so load the page with the original image instead
+        # may redirect to the appropriately sized image
+        submission_url = image_lightbox.match(submission_url).group(1) + 'sizes/o'
+        logging.debug('Flickr image old photo page')
+
+    if image_sizes.match(submission_url):
+        # image with links to different sizes, get the linked size
+        # TODO switch to get the original image?
+        logging.debug('Flickr image sizes')
+        with requests.Session() as s:
+            response = s.get(submission_url)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text)
+                # dd element with file ending with _d is the link to download
+                # first link with file ending with _m is a thumbnail?
+                # div id 'allsizes-photo' is what we're after
+                image_url = soup.find(id='allsizes-photo').find('img')['src']
+                images.append(image_url)
+
+    elif 'staticflickr.com/' in submission_url:
+        # single image, no magic needed
+        logging.debug('Flickr image')
+        images.append(submission_url)
+
+    else:
+        logging.info('Flickr unhandled')
 
     return images
 
@@ -91,7 +165,7 @@ def reddit_image_downloader(subreddit, period='day', score=500, max=25, download
         subreddit, period, score, download_location))
 
     # Connect to reddit and download the subreddit front page
-    r = praw.Reddit(user_agent='redditImageDownloader/1.2 (https://github.com/gaddman/redditImageDownloader)')
+    r = praw.Reddit(user_agent='redditImageDownloader/1.3 (https://github.com/gaddman/redditImageDownloader)')
     if period == 'day':
         submissions = r.get_subreddit(subreddit).get_top_from_day(limit=max)
     elif period == 'week':
@@ -119,8 +193,15 @@ def reddit_image_downloader(subreddit, period='day', score=500, max=25, download
                     image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
                     local_filename = 'reddit_{}_{}_{:02d}_{}'.format(subreddit, submission.id, index, image_filename)
                     download_image(image_url, os.path.join(download_location, local_filename))
+            elif (('flickr.com/' in submission.url) or ('flic.kr/' in submission.url)):
+                # This is a Flickr submission, we can deal with this
+                image_urls = flickr_handler(submission.url)
+                for index, image_url in enumerate(image_urls):
+                    image_filename = image_url.split('/')[-1].split('#')[0].split('?')[0]
+                    local_filename = 'reddit_{}_{}_{:02d}_{}'.format(subreddit, submission.id, index, image_filename)
+                    download_image(image_url, os.path.join(download_location, local_filename))
             else:
-                # non-Imgur URL, let's see what can be done.
+                # unknown URL, let's see what can be done.
                 # Only interested in images, ignore redirects or links to HTML pages
                 logging.debug('Non-imgur')
                 with requests.Session() as s:
